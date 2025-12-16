@@ -1,4 +1,4 @@
-param(
+﻿param(
     [string]$OpenAIKey,
     [int]$Port = 8000
 )
@@ -6,12 +6,12 @@ param(
 Write-Host "== Goal Support System: Windows setup =="
 
 # venv activate
-if (Test-Path ".venv\Scripts\Activate.ps1") {
-    . .venv\Scripts\Activate.ps1
+if (Test-Path ".venv\Scripts\activate") {
+    . .venv\Scripts\activate
 } else {
     Write-Host "Creating venv..."
     python -m venv .venv
-    . .venv\Scripts\Activate.ps1
+    . .venv\Scripts\activate
 }
 
 python -m pip install --upgrade pip
