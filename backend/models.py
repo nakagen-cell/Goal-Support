@@ -10,19 +10,16 @@ class Base(DeclarativeBase):
     pass
 
 
-class Style(enum.Enum):
-    """Instruction style conditions used in the experiments.
+class Directiveness(enum.Enum):
+    """Expression parameter: directiveness (imperative-ness)."""
+    HIGH = "HIGH"
+    LOW = "LOW"
 
-    本研究で用いる 3 種類のインストラクション文体条件：
 
-    - DIRECTIVE: 指示スタイル（命令的で断定的な文体）
-    - SUGGESTIVE: 提案スタイル（選択肢提示と自律性支持を行う文体）
-    - COLLABORATIVE: 協働スタイル（質問と共感的対話を含む文体）
-    """
-
-    DIRECTIVE = "DIRECTIVE"
-    SUGGESTIVE = "SUGGESTIVE"
-    COLLABORATIVE = "COLLABORATIVE"
+class ChoiceFraming(enum.Enum):
+    """Expression parameter: choice-framing / freedom-of-choice statement."""
+    PRESENT = "PRESENT"  # freedom-of-choice wording is explicitly present
+    ABSENT = "ABSENT"    # no explicit wording about user choice
 
 
 class User(Base):
@@ -41,43 +38,41 @@ class User(Base):
 
 
 class ExperimentSession(Base):
-    """One experimental session for a given user and style condition.
+    """One experimental session for a given user and experimental condition (d, c).
 
-    1 つのユーザーと 1 つの文体条件（指示／提案／協働）の組み合わせで構成される
-    対話エピソードを表す。論文中の「対話型プロトタイプ実験」や短期フィールド試験の
-    1 セッションに対応する。"""
+    本研究の 2×2 因子計画：
+    - Directiveness (HIGH / LOW)
+    - ChoiceFraming (PRESENT / ABSENT)
+    """
 
     __tablename__ = "sessions"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
-    condition_style: Mapped[Style] = mapped_column(Enum(Style))
+
+    directiveness: Mapped[Directiveness] = mapped_column(Enum(Directiveness))
+    choice_framing: Mapped[ChoiceFraming] = mapped_column(Enum(ChoiceFraming))
+
+    # Experimental design mode
+    design_mode: Mapped[str] = mapped_column(String(16), default="BETWEEN")  # BETWEEN or WITHIN
+    # For within-subject: JSON list of condition dicts [{directiveness, choice_framing}, ...]
+    condition_order_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # For within-subject: which condition index is currently active (0..3)
+    condition_index: Mapped[int] = mapped_column(Integer, default=0)
+
     goal: Mapped[str] = mapped_column(Text)  # user-defined goal text
+
+    initial_context: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # For within-subject: fixed content plan (JSON) shared across conditions
+    fixed_task_plan_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     user = relationship("User")
 
 
 class TurnLog(Base):
-    """Log for each LLM–user interaction turn.
-
-    論文第 5 章の「ログ設計」で挙げた項目に対応する。各ターンについて，次を記録する。
-
-    - user_id（User 経由）
-    - condition_style（ExperimentSession 経由）
-    - goal（ExperimentSession 経由）
-    - llm_prompt / llm_output
-    - user_response
-    - action_choice（実行／延期／調整／休養）
-    - autonomy_score（自律性）
-    - coercion_score（やらされ感）
-    - perceived_directiveness（命令性）
-    - perceived_choice（選択自由度）
-    - perceived_empathy（共感性）
-    - perceived_value_support（価値・理由提示の明確性）
-    - intention_score（行動意図）
-    - timestamp
-    """
+    """Log for each LLM–user interaction turn."""
 
     __tablename__ = "turn_logs"
 
@@ -85,11 +80,24 @@ class TurnLog(Base):
     session_id: Mapped[int] = mapped_column(ForeignKey("sessions.id"))
     turn_index: Mapped[int] = mapped_column(Integer)  # 0, 1, 2, ...
 
+    # Condition snapshot for analysis convenience
+    directiveness: Mapped[str] = mapped_column(String(16), default="")
+    choice_framing: Mapped[str] = mapped_column(String(16), default="")
+
     llm_prompt: Mapped[str] = mapped_column(Text)
     llm_output: Mapped[str] = mapped_column(Text)
 
-    # Style-agnostic task plan stored as JSON
+    # Content plan stored as JSON (content planner output)
     task_plan_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # Content integrity metrics
+    num_options: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    num_steps_total: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    char_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    # Deviation management
+    deviation_flags: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON list
+    rerender_count: Mapped[int] = mapped_column(Integer, default=0)
 
     # Raw text sent from the user for this turn (if any)
     user_response: Mapped[str] = mapped_column(Text, default="")
@@ -100,13 +108,25 @@ class TurnLog(Base):
     autonomy_score: Mapped[float | None] = mapped_column(Float, nullable=True)
     coercion_score: Mapped[float | None] = mapped_column(Float, nullable=True)
 
-    # 文体の背後要因を測定する補助指標
+
+    # Multi-item scale responses stored as JSON arrays (e.g., [1,2,3]).
+    autonomy_items_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    coercion_items_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    perceived_directiveness_items_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    perceived_choice_items_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    intention_items_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # Manipulation checks / perceived covariates
     perceived_directiveness: Mapped[float | None] = mapped_column(Float, nullable=True)
     perceived_choice: Mapped[float | None] = mapped_column(Float, nullable=True)
     perceived_empathy: Mapped[float | None] = mapped_column(Float, nullable=True)
     perceived_value_support: Mapped[float | None] = mapped_column(Float, nullable=True)
+    perceived_politeness: Mapped[float | None] = mapped_column(Float, nullable=True)
 
-    # 行動意図（例：「この支援を今後も使いたい」「今日の提案に従って行動したい」などの平均）
+    # Optional free text comment for the turn
+    free_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # Behavioral intention (optional)
     intention_score: Mapped[float | None] = mapped_column(Float, nullable=True)
 
     timestamp: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
